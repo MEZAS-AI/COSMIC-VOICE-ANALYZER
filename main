@@ -1,0 +1,396 @@
+import sounddevice as sd
+import numpy as np
+import scipy.io.wavfile as wav
+import speech_recognition as sr
+import tkinter as tk
+from tkinter import ttk, font, messagebox
+import threading
+import time
+import os
+import math
+import random
+
+class CosmicVoiceRecorder:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("Cosmic Voice Analyzer")
+        self.root.geometry("1000x700")
+        self.root.configure(bg='#0a0a1a')
+        
+        self.languages = {
+            "en": {
+                "title": "COSMIC VOICE ANALYZER",
+                "menu_language": "Language",
+                "menu_help": "Help",
+                "status_ready": "READY",
+                "status_recording": "RECORDING...",
+                "status_processing": "PROCESSING...",
+                "btn_record": "RECORD",
+                "btn_stop": "STOP",
+                "btn_analyze": "ANALYZE",
+                "btn_exit": "EXIT",
+                "help_text": "This app records audio and converts it to text.\nPress RECORD to start, STOP to finish."
+            },
+            "ru": {
+                "title": "КОСМИЧЕСКИЙ АНАЛИЗАТОР РЕЧИ",
+                "menu_language": "Язык",
+                "menu_help": "Помощь",
+                "status_ready": "ГОТОВ",
+                "status_recording": "ЗАПИСЬ...",
+                "status_processing": "ОБРАБОТКА...",
+                "btn_record": "ЗАПИСЬ",
+                "btn_stop": "СТОП",
+                "btn_analyze": "АНАЛИЗ",
+                "btn_exit": "ВЫХОД",
+                "help_text": "Это приложение записывает аудио и преобразует его в текст.\nНажмите ЗАПИСЬ для начала, СТОП для завершения."
+            }
+        }
+        self.current_lang = "en"
+        
+        self.sample_rate = 44100
+        self.channels = 1
+        self.dtype = "int16"
+        self.output_file = "cosmic_voice.wav"
+        self.recording = False
+        self.audio_data = []
+        self.start_time = 0
+        
+        self.create_menu()
+        self.create_widgets()
+        self.create_animations()
+        
+    def tr(self, key):
+        return self.languages[self.current_lang].get(key, key)
+    
+    def create_menu(self):
+        menubar = tk.Menu(self.root)
+        
+        lang_menu = tk.Menu(menubar, tearoff=0)
+        lang_menu.add_command(label="English", command=lambda: self.set_language("en"))
+        lang_menu.add_command(label="Русский", command=lambda: self.set_language("ru"))
+        menubar.add_cascade(label=self.tr("menu_language"), menu=lang_menu)
+        
+        help_menu = tk.Menu(menubar, tearoff=0)
+        help_menu.add_command(label=self.tr("menu_help"), command=self.show_help)
+        menubar.add_cascade(label=self.tr("menu_help"), menu=help_menu)
+        
+        self.root.config(menu=menubar)
+    
+    def set_language(self, lang_code):
+        self.current_lang = lang_code
+        self.update_ui_text()
+    
+    def update_ui_text(self):
+        self.title_label.config(text=self.tr("title"))
+        self.status_text.config(text=self.tr("status_ready"))
+        self.record_btn.config(text=self.tr("btn_record"))
+        self.stop_btn.config(text=self.tr("btn_stop"))
+        self.recognize_btn.config(text=self.tr("btn_analyze"))
+        self.exit_btn.config(text=self.tr("btn_exit"))
+    
+    def show_help(self):
+        messagebox.showinfo(self.tr("menu_help"), self.tr("help_text"))
+    
+    def create_widgets(self):
+        cosmic_font = font.Font(family="Courier New", size=12, weight="bold")
+        title_font = font.Font(family="Courier New", size=24, weight="bold")
+        
+        self.main_frame = tk.Frame(self.root, bg='#0a0a1a')
+        self.main_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
+        
+        self.title_label = tk.Label(
+            self.main_frame, 
+            text=self.tr("title"), 
+            font=title_font, 
+            fg='#00ffff', 
+            bg='#0a0a1a'
+        )
+        self.title_label.pack(pady=(0, 20))
+        
+        self.canvas = tk.Canvas(
+            self.main_frame, 
+            width=960, 
+            height=300, 
+            bg='#0a0a1a', 
+            highlightthickness=0
+        )
+        self.canvas.pack(pady=(0, 20))
+        
+        self.moon = self.canvas.create_oval(
+            700, 50, 800, 150,
+            fill='#f0f0a0',
+            outline=''
+        )
+        self.moon_glow = self.canvas.create_oval(
+            690, 40, 810, 160,
+            fill='#f0f0a0',
+            outline=''
+        )
+        
+        self.status_frame = tk.Frame(self.main_frame, bg='#0a0a1a')
+        self.status_frame.pack(fill=tk.X, pady=(0, 20))
+        
+        self.status_label = tk.Label(
+            self.status_frame, 
+            text="STATUS:", 
+            font=cosmic_font, 
+            fg='white', 
+            bg='#0a0a1a'
+        )
+        self.status_label.pack(side=tk.LEFT)
+        
+        self.status_text = tk.Label(
+            self.status_frame, 
+            text=self.tr("status_ready"), 
+            font=cosmic_font, 
+            fg='#00ff00', 
+            bg='#0a0a1a'
+        )
+        self.status_text.pack(side=tk.LEFT, padx=10)
+        
+        self.duration_label = tk.Label(
+            self.status_frame, 
+            text="00:00:00", 
+            font=cosmic_font, 
+            fg='white', 
+            bg='#0a0a1a'
+        )
+        self.duration_label.pack(side=tk.RIGHT)
+        
+        self.output_text = tk.Text(
+            self.main_frame, 
+            width=100, 
+            height=10, 
+            bg='black', 
+            fg='#00ff00', 
+            font=cosmic_font,
+            insertbackground='#00ff00',
+            highlightthickness=1,
+            highlightcolor='#00ffff'
+        )
+        self.output_text.pack(pady=(0, 20))
+        
+        self.button_frame = tk.Frame(self.main_frame, bg='#0a0a1a')
+        self.button_frame.pack()
+        
+        button_style = {
+            'font': cosmic_font,
+            'width': 12,
+            'height': 1,
+            'bd': 0,
+            'highlightthickness': 0,
+            'activebackground': '#003333'
+        }
+        
+        self.record_btn = tk.Button(
+            self.button_frame, 
+            text=self.tr("btn_record"), 
+            command=self.start_recording,
+            bg='#ff0000', 
+            fg='white',
+            **button_style
+        )
+        self.record_btn.grid(row=0, column=0, padx=10)
+        
+        self.stop_btn = tk.Button(
+            self.button_frame, 
+            text=self.tr("btn_stop"), 
+            command=self.stop_recording,
+            bg='#990000', 
+            fg='white',
+            state=tk.DISABLED,
+            **button_style
+        )
+        self.stop_btn.grid(row=0, column=1, padx=10)
+        
+        self.recognize_btn = tk.Button(
+            self.button_frame, 
+            text=self.tr("btn_analyze"), 
+            command=self.recognize_speech,
+            bg='#0000ff', 
+            fg='white',
+            **button_style
+        )
+        self.recognize_btn.grid(row=0, column=2, padx=10)
+        
+        self.exit_btn = tk.Button(
+            self.button_frame, 
+            text=self.tr("btn_exit"), 
+            command=self.root.quit,
+            bg='#660066', 
+            fg='white',
+            **button_style
+        )
+        self.exit_btn.grid(row=0, column=3, padx=10)
+        
+        self.output_text.tag_config('error', foreground='#ff5555')
+        self.output_text.tag_config('success', foreground='#55ff55')
+        self.output_text.tag_config('info', foreground='#00ffff')
+        self.output_text.tag_config('warning', foreground='#ffff55')
+    
+    def create_animations(self):
+        self.stars = []
+        for _ in range(50):
+            x = random.randint(0, 960)
+            y = random.randint(0, 300)
+            size = random.uniform(0.5, 2)
+            speed = random.uniform(0.5, 2)
+            star = self.canvas.create_oval(
+                x, y, x+size, y+size, 
+                fill='white', 
+                outline=''
+            )
+            self.stars.append({
+                'id': star,
+                'speed': speed,
+                'size': size
+            })
+        
+        self.animate_stars()
+        self.animate_moon()
+    
+    def animate_stars(self):
+        for star in self.stars:
+            self.canvas.move(star['id'], 0, star['speed'])
+            x1, y1, x2, y2 = self.canvas.coords(star['id'])
+            
+            if y1 > 300:
+                self.canvas.delete(star['id'])
+                x = random.randint(0, 960)
+                size = star['size']
+                new_star = self.canvas.create_oval(
+                    x, -10, x+size, -10+size, 
+                    fill='white', 
+                    outline=''
+                )
+                star['id'] = new_star
+                star['speed'] = random.uniform(0.5, 2)
+        
+        self.root.after(30, self.animate_stars)
+    
+    def animate_moon(self):
+        glow_intensity = 0.7 + 0.3 * math.sin(time.time() * 2)
+        color = self.adjust_color_brightness('#f0f0a0', glow_intensity)
+        self.canvas.itemconfig(self.moon_glow, fill=color)
+        self.root.after(100, self.animate_moon)
+    
+    def adjust_color_brightness(self, hex_color, factor):
+        hex_color = hex_color.lstrip('#')
+        rgb = tuple(int(hex_color[i:i+2], 16) for i in (0, 2, 4))
+        rgb = tuple(min(255, max(0, int(c * factor))) for c in rgb)
+        return f'#{rgb[0]:02x}{rgb[1]:02x}{rgb[2]:02x}'
+    
+    def start_recording(self):
+        self.recording = True
+        self.start_time = time.time()
+        self.audio_data = []
+        
+        self.record_btn.config(state=tk.DISABLED)
+        self.stop_btn.config(state=tk.NORMAL)
+        self.recognize_btn.config(state=tk.DISABLED)
+        self.status_text.config(text=self.tr("status_recording"), fg='#ff0000')
+        
+        self.output_text.insert(tk.END, f"[{time.strftime('%H:%M:%S')}] {self.tr('status_recording')}\n", 'info')
+        self.output_text.see(tk.END)
+        
+        threading.Thread(target=self.record_audio, daemon=True).start()
+    
+    def record_audio(self):
+        def callback(indata, frames, time, status):
+            if self.recording:
+                self.audio_data.append(indata.copy())
+        
+        with sd.InputStream(
+            samplerate=self.sample_rate, 
+            channels=self.channels,
+            dtype=self.dtype, 
+            callback=callback
+        ):
+            while self.recording:
+                duration = time.time() - self.start_time
+                self.duration_label.config(
+                    text=time.strftime("%H:%M:%S", time.gmtime(duration)))
+                time.sleep(0.1)
+    
+    def stop_recording(self):
+        self.recording = False
+        
+        self.record_btn.config(state=tk.NORMAL)
+        self.stop_btn.config(state=tk.DISABLED)
+        self.recognize_btn.config(state=tk.NORMAL)
+        self.status_text.config(text=self.tr("status_processing"), fg='#ffff00')
+        
+        duration = time.time() - self.start_time
+        self.output_text.insert(
+            tk.END, 
+            f"[{time.strftime('%H:%M:%S')}] {self.tr('status_processing')} ({duration:.1f}s)\n", 
+            'info'
+        )
+        self.output_text.see(tk.END)
+        
+        if self.audio_data:
+            recording_concatenated = np.concatenate(self.audio_data, axis=0)
+            wav.write(self.output_file, self.sample_rate, recording_concatenated)
+        
+        self.status_text.config(text=self.tr("status_ready"), fg='#00ff00')
+    
+    def recognize_speech(self):
+        if not os.path.exists(self.output_file):
+            self.output_text.insert(
+                tk.END, 
+                f"[{time.strftime('%H:%M:%S')}] ERROR: No recording found\n", 
+                'error'
+            )
+            self.output_text.see(tk.END)
+            return
+        
+        self.status_text.config(text="ANALYZING...", fg='#00ffff')
+        self.output_text.insert(
+            tk.END, 
+            f"[{time.strftime('%H:%M:%S')}] Starting speech recognition...\n", 
+            'info'
+        )
+        self.output_text.see(tk.END)
+        
+        threading.Thread(target=self._recognize_speech, daemon=True).start()
+    
+    def _recognize_speech(self):
+        recognizer = sr.Recognizer()
+        try:
+            with sr.AudioFile(self.output_file) as source:
+                audio = recognizer.record(source)
+            
+            try:
+                text = recognizer.recognize_google(audio, language=self.current_lang)
+                self.output_text.insert(
+                    tk.END, 
+                    f"[{time.strftime('%H:%M:%S')}] RESULT: {text}\n\n", 
+                    'success'
+                )
+            except sr.UnknownValueError:
+                self.output_text.insert(
+                    tk.END, 
+                    f"[{time.strftime('%H:%M:%S')}] WARNING: Speech not recognized\n\n", 
+                    'warning'
+                )
+            except sr.RequestError as e:
+                self.output_text.insert(
+                    tk.END, 
+                    f"[{time.strftime('%H:%M:%S')}] ERROR: Service error - {e}\n\n", 
+                    'error'
+                )
+        
+        except Exception as e:
+            self.output_text.insert(
+                tk.END, 
+                f"[{time.strftime('%H:%M:%S')}] ERROR: Processing error - {e}\n\n", 
+                'error'
+            )
+        
+        self.output_text.see(tk.END)
+        self.status_text.config(text=self.tr("status_ready"), fg='#00ff00')
+
+if __name__ == "__main__":
+    root = tk.Tk()
+    app = CosmicVoiceRecorder(root)
+    root.mainloop()
